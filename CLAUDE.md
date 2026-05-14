@@ -7,7 +7,7 @@ Data source: LTA DataMall API (free, requires registration).
 ## Stack
 - Expo ~54 / Expo Router ~6 / React Native 0.81
 - @gorhom/bottom-sheet v5 (Reanimated 4 + react-native-worklets)
-- react-native-maps (PROVIDER_DEFAULT — Apple Maps on iOS, Google Maps on Android)
+- react-native-maps (PROVIDER_DEFAULT — Google Maps on Android via native build)
 - expo-location for GPS
 - AsyncStorage for persistence
 - zustand for global state
@@ -30,17 +30,34 @@ Header: `AccountKey: <key>`
 
 - `/BusStops` — paginated 500/page, use `$skip`. **No `/v3/` prefix** — that path 404s.
 - `/v3/BusArrival?BusStopCode=XXXXX` — real-time bus arrivals
-- `/v3/TrainArrival` — real-time MRT arrivals
+- `/v3/TrainArrival?StationCode=XXXXX` — real-time MRT arrivals. **StationCode is required** — calling without it returns 404.
 
-### Nearby stops
+### Nearby bus stops
 `fetchAllBusStops()` in `lib/lta.ts` fetches all ~5,200 stops across multiple pages.
-Filter uses Euclidean distance < 0.007 degrees (~700m radius).
+Filter uses Euclidean distance < 0.007 degrees (~700m radius), sorted by proximity, capped at 20.
 Android emulator defaults to California — set latitude/longitude manually in emulator settings.
+
+### Nearby MRT stations
+`constants/mrtStations.ts` has a static list of all ~140 MRT/LRT stations with coordinates.
+`nearbyMrtStations(lat, lng)` filters by Euclidean distance < 0.012 degrees (~1.2km), sorted by proximity.
+`TrainTab` calls `fetchTrainArrivals(apiKey, stationCode)` per nearby station in parallel using `Promise.allSettled`.
+
+### Map pins
+`app/index.tsx` renders a `<Marker>` from `react-native-maps` for each stop in `nearbyStops`.
+Pins use `pinColor={Colors.accent}` (red). Tap a pin to see stop name, code, and road.
 
 ### Bottom sheet
 Uses `@gorhom/bottom-sheet` v5. Snap points: `[72, '50%', '92%']`.
 Must be wrapped in `GestureHandlerRootView` (done in `app/_layout.tsx`).
 `BottomSheetView` (not plain `View`) is required for the sheet content wrapper.
+Tabs: Nearby · Favourites · Train · Settings (Search tab removed — use the ⌕ map button instead).
+
+### Google Maps (Android native build)
+`react-native-maps` on Android requires a Google Maps API key in `AndroidManifest.xml`:
+```xml
+<meta-data android:name="com.google.android.geo.API_KEY" android:value="YOUR_KEY"/>
+```
+Enable **Maps SDK for Android** in Google Cloud Console first.
 
 ### Splash screen
 `expo-splash-screen` is used. `SplashScreen.preventAutoHideAsync()` is called at module level in
@@ -51,19 +68,19 @@ Must be wrapped in `GestureHandlerRootView` (done in `app/_layout.tsx`).
 | File | Purpose |
 |---|---|
 | `app/_layout.tsx` | Root: GestureHandlerRootView, StatusBar, SplashScreen, hydrate |
-| `app/index.tsx` | MapView + search FAB + MainBottomSheet |
-| `components/MainBottomSheet.tsx` | Sheet + tab bar (Nearby/Favourites/Search/Train/Settings) |
+| `app/index.tsx` | MapView + Marker pins for nearby stops + search FAB + MainBottomSheet |
+| `components/MainBottomSheet.tsx` | Sheet + tab bar (Nearby/Favourites/Train/Settings) |
 | `components/BusStopRow.tsx` | List row: badge, name (long-press to rename), heart, chevron, inline arrivals |
 | `components/ArrivalCard.tsx` | Per-service row: bus no, colour-coded mins, load, type |
 | `components/SearchOverlay.tsx` | Full-screen modal: search stops by code/name/road |
-| `components/tabs/NearbyTab.tsx` | GPS stops, loads all pages, 700m filter, refresh button |
+| `components/tabs/NearbyTab.tsx` | GPS stops, all pages, 700m filter, sorted by proximity, max 20, refresh button |
 | `components/tabs/FavouritesTab.tsx` | Saved stops, fetches full stop info by code |
-| `components/tabs/SearchTab.tsx` | Manual stop-code arrival lookup |
-| `components/tabs/TrainTab.tsx` | MRT arrivals, grouped by StationCode, line colours |
+| `components/tabs/TrainTab.tsx` | Nearby MRT/LRT stations (static coords), per-station LTA API calls, line colours |
 | `components/tabs/SettingsTab.tsx` | API key TextInput + save + link to DataMall |
 | `constants/theme.ts` | Colors, Fonts, Spacing, Radius, badgeColor() function |
 | `constants/singapore.ts` | Default map region (centre SG) |
-| `lib/lta.ts` | makeClient(), fetchBusArrivals(), fetchBusStops(), fetchAllBusStops(), fetchTrainArrivals(), minsToArrival(), loadLabel(), typeLabel() |
+| `constants/mrtStations.ts` | Static MRT/LRT station list with coords, line colours, nearbyMrtStations() helper |
+| `lib/lta.ts` | makeClient(), fetchBusArrivals(), fetchBusStops(), fetchAllBusStops(), fetchTrainArrivals(apiKey, stationCode), minsToArrival(), loadLabel(), typeLabel() |
 | `lib/storage.ts` | getApiKey/saveApiKey, getFavourites/toggleFavourite, getCustomNames/setCustomName |
 | `store/useAppStore.ts` | Zustand: apiKey, favourites, customNames, nearbyStops, expandedStop, searchQuery + hydrate() |
 
@@ -88,6 +105,7 @@ npx expo start --clear      # start Metro with cache cleared
 npx expo start              # normal start
 npx expo install <pkg>      # install Expo SDK packages (auto-matches SDK version)
 npx expo doctor             # check dependency mismatches
+npx expo prebuild --platform android   # regenerate android/ native folder
 ```
 
 ## Development Notes
@@ -95,3 +113,5 @@ npx expo doctor             # check dependency mismatches
 - Heart icon toggles favourite; favourites are stop codes stored as string[]
 - expandedStop in Zustand is a single stop code — only one stop expands at a time
 - The ⌕ search button on the map opens SearchOverlay which navigates to SearchTab on select
+- Nearby stops: sorted by proximity, max 20, ~700m radius
+- Nearby MRT stations: sorted by proximity, ~1.2km radius, fetched in parallel per station

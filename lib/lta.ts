@@ -84,10 +84,13 @@ export async function fetchAllBusStops(apiKey: string): Promise<BusStop[]> {
 }
 
 export async function fetchTrainArrivals(
-  apiKey: string
+  apiKey: string,
+  stationCode: string
 ): Promise<TrainArrivalStation[]> {
   const client = makeClient(apiKey);
-  const res = await client.get('/v3/TrainArrival');
+  const res = await client.get('/v3/TrainArrival', {
+    params: { StationCode: stationCode },
+  });
   return res.data?.value ?? [];
 }
 

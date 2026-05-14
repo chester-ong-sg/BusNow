@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { StyleSheet, View, TouchableOpacity, Text } from 'react-native';
-import MapView, { PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { PROVIDER_DEFAULT, Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import BottomSheet from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,7 +16,7 @@ export default function HomeScreen() {
   const mapRef = useRef<MapView>(null);
   const sheetRef = useRef<BottomSheet>(null);
   const [searchVisible, setSearchVisible] = useState(false);
-  const { apiKey, setNearbyStops } = useAppStore();
+  const { apiKey, nearbyStops, setNearbyStops } = useAppStore();
 
   useEffect(() => {
     (async () => {
@@ -42,7 +42,18 @@ export default function HomeScreen() {
               const dlng = s.Longitude - loc.coords.longitude;
               return Math.sqrt(dlat * dlat + dlng * dlng) < 0.007;
             })
-            .slice(0, 30);
+            .sort((a, b) => {
+              const da = Math.sqrt(
+                Math.pow(a.Latitude - loc.coords.latitude, 2) +
+                Math.pow(a.Longitude - loc.coords.longitude, 2)
+              );
+              const db = Math.sqrt(
+                Math.pow(b.Latitude - loc.coords.latitude, 2) +
+                Math.pow(b.Longitude - loc.coords.longitude, 2)
+              );
+              return da - db;
+            })
+            .slice(0, 20);
           setNearbyStops(nearby);
         } catch (_) {}
       }
@@ -65,7 +76,17 @@ export default function HomeScreen() {
         showsMyLocationButton={false}
         userInterfaceStyle="dark"
         mapType="standard"
-      />
+      >
+        {nearbyStops.map((stop) => (
+          <Marker
+            key={stop.BusStopCode}
+            coordinate={{ latitude: stop.Latitude, longitude: stop.Longitude }}
+            title={stop.Description}
+            description={`${stop.BusStopCode} · ${stop.RoadName}`}
+            pinColor={Colors.accent}
+          />
+        ))}
+      </MapView>
 
       {/* Search button top-right */}
       <TouchableOpacity

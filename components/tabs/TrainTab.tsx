@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,34 +8,15 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import * as Location from 'expo-location';
 import { TrainArrivalStation, fetchTrainArrivals, minsToArrival } from '../../lib/lta';
+import { MrtStation, nearbyMrtStations, lineColor } from '../../constants/mrtStations';
 import { useAppStore } from '../../store/useAppStore';
 import { Colors, Fonts, Radius, Spacing } from '../../constants/theme';
 
-interface StationGroup {
-  code: string;
-  name: string;
+interface StationWithArrivals {
+  station: MrtStation;
   arrivals: TrainArrivalStation[];
-}
-
-const MRT_LINE_COLORS: Record<string, string> = {
-  NS: '#E8003D',
-  EW: '#009645',
-  CC: '#FA9E0D',
-  DT: '#005EC4',
-  TE: '#9D5B25',
-  NE: '#9900AA',
-  BP: '#748477',
-  SK: '#748477',
-  PE: '#748477',
-  PW: '#748477',
-  SE: '#748477',
-  SW: '#748477',
-};
-
-function lineColor(code: string): string {
-  const prefix = code.replace(/\d/g, '');
-  return MRT_LINE_COLORS[prefix] ?? Colors.textSub;
 }
 
 function minsColor(mins: number | null): string {
@@ -47,9 +28,13 @@ function minsColor(mins: number | null): string {
 
 export function TrainTab() {
   const { apiKey } = useAppStore();
-  const [stations, setStations] = useState<StationGroup[]>([]);
+  const [data, setData] = useState<StationWithArrivals[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (apiKey) load();
+  }, [apiKey]);
 
   async function load() {
     if (!apiKey) {
@@ -58,22 +43,43 @@ export function TrainTab() {
     }
     setLoading(true);
     try {
-      const data = await fetchTrainArrivals(apiKey);
-      const map = new Map<string, StationGroup>();
-      for (const item of data) {
-        if (!map.has(item.StationCode)) {
-          map.set(item.StationCode, {
-            code: item.StationCode,
-            name: item.StationName,
-            arrivals: [],
-          });
-        }
-        map.get(item.StationCode)!.arrivals.push(item);
+      // 1. Get location
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Location denied', 'Grant location permission to find nearby stations.');
+        setLoading(false);
+        return;
       }
-      setStations(Array.from(map.values()));
+      const loc = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = loc.coords;
+
+      // 2. Find nearby stations from static list (~1.2km radius)
+      const nearby = nearbyMrtStations(latitude, longitude);
+
+      if (nearby.length === 0) {
+        setData([]);
+        setLoaded(true);
+        setLoading(false);
+        return;
+      }
+
+      // 3. Fetch arrivals per nearby station in parallel
+      const arrivalResults = await Promise.allSettled(
+        nearby.map((s) => fetchTrainArrivals(apiKey, s.code))
+      );
+
+      const result: StationWithArrivals[] = nearby.map((s, i) => {
+        const settled = arrivalResults[i];
+        return {
+          station: s,
+          arrivals: settled.status === 'fulfilled' ? settled.value : [],
+        };
+      });
+
+      setData(result);
       setLoaded(true);
-    } catch {
-      Alert.alert('Error', 'Could not fetch train arrivals.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not fetch train arrivals.');
     } finally {
       setLoading(false);
     }
@@ -92,7 +98,7 @@ export function TrainTab() {
     return (
       <View style={styles.center}>
         <ActivityIndicator color={Colors.accent} size="large" />
-        <Text style={styles.hint}>Loading train arrivals…</Text>
+        <Text style={styles.hint}>Finding nearby stations…</Text>
       </View>
     );
   }
@@ -101,7 +107,7 @@ export function TrainTab() {
     return (
       <View style={styles.center}>
         <Text style={styles.icon}>🚇</Text>
-        <Text style={styles.hint}>MRT real-time arrival times</Text>
+        <Text style={styles.hint}>Nearby MRT / LRT arrivals</Text>
         <TouchableOpacity style={styles.loadBtn} onPress={load} activeOpacity={0.8}>
           <Text style={styles.loadBtnText}>Load Train Times</Text>
         </TouchableOpacity>
@@ -109,10 +115,14 @@ export function TrainTab() {
     );
   }
 
-  if (stations.length === 0) {
+  if (data.length === 0) {
     return (
       <View style={styles.center}>
-        <Text style={styles.hint}>No train data available right now.</Text>
+        <Text style={styles.icon}>🚇</Text>
+        <Text style={styles.hint}>No MRT/LRT stations within 1.2 km.</Text>
+        <TouchableOpacity style={styles.loadBtn} onPress={load} activeOpacity={0.8}>
+          <Text style={styles.loadBtnText}>↻ Refresh</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -120,47 +130,58 @@ export function TrainTab() {
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>MRT Arrivals</Text>
+        <Text style={styles.headerTitle}>Nearby Trains</Text>
         <TouchableOpacity onPress={load}>
           <Text style={styles.refresh}>↻ Refresh</Text>
         </TouchableOpacity>
       </View>
       <FlatList
-        data={stations}
-        keyExtractor={(s) => s.code}
-        renderItem={({ item }) => <StationRow station={item} />}
+        data={data}
+        keyExtractor={(item) => item.station.code}
+        renderItem={({ item }) => <StationRow item={item} />}
         contentContainerStyle={{ paddingBottom: 40 }}
       />
     </View>
   );
 }
 
-function StationRow({ station }: { station: StationGroup }) {
+function StationRow({ item }: { item: StationWithArrivals }) {
+  const { station, arrivals } = item;
   const color = lineColor(station.code);
+  const hasArrivals = arrivals.length > 0;
+
   return (
     <View style={styles.stationRow}>
-      <View style={[styles.stationBadge, { backgroundColor: color }]}>
-        <Text style={styles.stationCode}>{station.code}</Text>
+      {/* Line badge */}
+      <View style={[styles.badge, { backgroundColor: color }]}>
+        <Text style={styles.badgeCode}>{station.code}</Text>
       </View>
-      <View style={styles.stationInfo}>
-        <Text style={styles.stationName}>{station.name}</Text>
-        <View style={styles.arrivalRow}>
-          {station.arrivals.slice(0, 3).map((a, i) => {
-            const mins = minsToArrival(a.EstArrival);
-            const color = minsColor(mins);
-            const label = mins === null ? '–' : mins === 0 ? 'Arr' : `${mins}m`;
-            return (
-              <View key={i} style={styles.arrPill}>
-                <Text style={[styles.arrMins, { color }]}>{label}</Text>
-                {!!a.Destination && (
-                  <Text style={styles.arrDest} numberOfLines={1}>
-                    → {a.Destination}
-                  </Text>
-                )}
-              </View>
-            );
-          })}
-        </View>
+
+      {/* Info */}
+      <View style={styles.info}>
+        <Text style={styles.name}>{station.name}</Text>
+
+        {hasArrivals ? (
+          <View style={styles.arrivalRow}>
+            {arrivals.slice(0, 3).map((a, i) => {
+              const mins = minsToArrival(a.EstArrival);
+              const col = minsColor(mins);
+              const label = mins === null ? '–' : mins === 0 ? 'Arr' : `${mins}m`;
+              return (
+                <View key={i} style={styles.arrPill}>
+                  <Text style={[styles.arrMins, { color: col }]}>{label}</Text>
+                  {!!a.Destination && (
+                    <Text style={styles.arrDest} numberOfLines={1}>
+                      → {a.Destination}
+                    </Text>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <Text style={styles.noData}>No live data available</Text>
+        )}
       </View>
     </View>
   );
@@ -221,21 +242,21 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     gap: Spacing.md,
   },
-  stationBadge: {
+  badge: {
     borderRadius: Radius.sm,
     paddingHorizontal: Spacing.sm,
     paddingVertical: Spacing.xs,
-    minWidth: 48,
+    minWidth: 52,
     alignItems: 'center',
     marginTop: 2,
   },
-  stationCode: {
+  badgeCode: {
     color: '#fff',
     fontSize: Fonts.size.sm,
     fontWeight: Fonts.weight.bold,
   },
-  stationInfo: { flex: 1 },
-  stationName: {
+  info: { flex: 1 },
+  name: {
     color: Colors.text,
     fontSize: Fonts.size.md,
     fontWeight: Fonts.weight.semibold,
@@ -243,7 +264,7 @@ const styles = StyleSheet.create({
   },
   arrivalRow: {
     flexDirection: 'row',
-    gap: Spacing.md,
+    gap: Spacing.lg,
     flexWrap: 'wrap',
   },
   arrPill: {
@@ -257,5 +278,10 @@ const styles = StyleSheet.create({
     color: Colors.textSub,
     fontSize: Fonts.size.xs,
     maxWidth: 100,
+  },
+  noData: {
+    color: Colors.textMuted,
+    fontSize: Fonts.size.sm,
+    fontStyle: 'italic',
   },
 });

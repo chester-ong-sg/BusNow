@@ -8,16 +8,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Fonts, Spacing } from '../constants/theme';
 import { NearbyTab } from './tabs/NearbyTab';
 import { FavouritesTab } from './tabs/FavouritesTab';
-import { SearchTab } from './tabs/SearchTab';
 import { TrainTab } from './tabs/TrainTab';
 import { SettingsTab } from './tabs/SettingsTab';
 
-type Tab = 'nearby' | 'favourites' | 'search' | 'train' | 'settings';
+type Tab = 'nearby' | 'favourites' | 'train' | 'settings';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'nearby', label: 'Nearby', icon: '📍' },
   { id: 'favourites', label: 'Favourites', icon: '♥' },
-  { id: 'search', label: 'Search', icon: '🔎' },
   { id: 'train', label: 'Train', icon: '🚇' },
   { id: 'settings', label: 'Settings', icon: '⚙' },
 ];
@@ -47,7 +45,6 @@ export const MainBottomSheet = forwardRef<BottomSheet>((_, ref) => {
     switch (activeTab) {
       case 'nearby': return <NearbyTab />;
       case 'favourites': return <FavouritesTab />;
-      case 'search': return <SearchTab />;
       case 'train': return <TrainTab />;
       case 'settings': return <SettingsTab />;
     }

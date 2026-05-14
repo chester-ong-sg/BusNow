@@ -40,7 +40,18 @@ export function NearbyTab() {
           const dlng = s.Longitude - loc.coords.longitude;
           return Math.sqrt(dlat * dlat + dlng * dlng) < 0.007; // ~700m radius
         })
-        .slice(0, 40);
+        .sort((a, b) => {
+          const da = Math.sqrt(
+            Math.pow(a.Latitude - loc.coords.latitude, 2) +
+            Math.pow(a.Longitude - loc.coords.longitude, 2)
+          );
+          const db = Math.sqrt(
+            Math.pow(b.Latitude - loc.coords.latitude, 2) +
+            Math.pow(b.Longitude - loc.coords.longitude, 2)
+          );
+          return da - db;
+        })
+        .slice(0, 20);
       setNearbyStops(nearby);
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Failed to load nearby stops.');
